@@ -14,7 +14,7 @@ torch.random.manual_seed(0)
 np.random.seed(0)
 
 parser = argparse.ArgumentParser("Transformer-LSTM")
-parser.add_argument("-data_path", type=str, default="D:\\Users\\86188\\Desktop\\v2\\merged_file.csv", help="dataset path")
+parser.add_argument("-data_path", type=str, default="merged_file.csv", help="dataset path")
 
 args = parser.parse_args()
 time_step = 10  # 根据10天数据预测第11天
