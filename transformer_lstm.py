@@ -117,10 +117,10 @@ class AttnDecoder(nn.Module):
 class StockDataset(Dataset):
     def __init__(self, file_path, T=time_step, train_flag=True):
         # 读取数据
-        data_pd = pd.read_csv(file_path)
+        df = pd.read_csv(file_path)
 
         # 只保留需要的列，去掉非数值列如 `date` 和 `code`
-        feature_data = data_pd[['avg_sentiment_score', 'high', 'low', 'open', 'close', 'volume']]
+        feature_data = df[['avg_sentiment_score', 'high', 'low', 'open', 'close', 'volume']]
 
         self.train_flag = train_flag
         self.data_train_ratio = 0.9

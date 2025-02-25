@@ -16,68 +16,43 @@ def split_sequences(sequences, in_steps, out_steps):
         # 检查是否越界
         if i + in_steps + out_steps > len(sequences):
             break
-        seq_x = sequences[i : i + in_steps, :-1]
-        seq_y = sequences[i + in_steps : i + in_steps + out_steps, -1]
-        X.append(seq_x)
-        y.append(seq_y)
+        X.append(sequences[i : i + in_steps, :-1])
+        y.append(sequences[i + in_steps : i + in_steps + out_steps, -1])
     return array(X), array(y)
 
-# reading data frame ==================================================
-df = pd.read_csv("goldETF.csv")
 
-in_cols = ["Open", "Low", "Close"]
-out_cols = ["Close", "Low"]
+# 获取原始数据集
+df = pd.read_csv("merged_file.csv")
+dataset = df[['avg_sentiment_score', 'high', 'low', 'open', 'close', 'volume','close']].values
 
-# choose a number of time steps
-n_steps_in, n_steps_out = 45, 1
-
-# ==============================================================================
-# Preparing Model for 'Low'=======================================================
-j = 1
-dataset_low = np.empty((df[out_cols[j]].values.shape[0], 0))
-for i in range(len(in_cols)):
-    dataset_low = np.append(
-        dataset_low,
-        df[in_cols[i]].values.reshape(df[in_cols[i]].values.shape[0], 1),
-        axis=1,
-    )
-
-dataset_low = np.append(
-    dataset_low,
-    df[out_cols[j]].values.reshape(df[out_cols[j]].values.shape[0], 1),
-    axis=1,
-)
-
-# Scaling dataset
+# 对数据进行缩放，消除量纲间的差异
 scaler = MinMaxScaler(feature_range=(0, 1))
-scaler_all = scaler.fit(dataset_low)
-scaled_data = scaler_all.transform(dataset_low)
+scaled_data = scaler.fit_transform(dataset)
 
-# convert into input/output
-x_train, y_train = split_sequences(scaled_data, n_steps_in, n_steps_out)
+# 指定时间片
+n_steps_in, n_steps_out = 10, 1
 
-train_set_size = int(0.2 * scaled_data.shape[0])
-x_test, y_test = split_sequences(
-    scaled_data[-train_set_size:-1, :], n_steps_in, n_steps_out
-)
+# 按照0.8的比例划分训练集和验证集
+data_train_ratio = 0.8
+split_index = int(data_train_ratio * scaled_data.shape[0])
+x_train,y_train = split_sequences(scaled_data[:split_index,:],n_steps_in,n_steps_out)
+x_test,y_test = split_sequences(scaled_data[split_index:,:],n_steps_in,n_steps_out)
 
-# make training and test sets in torch
+# 转为torch张量
 x_train = torch.from_numpy(x_train).type(torch.Tensor)
-x_test = torch.from_numpy(x_test).type(torch.Tensor)
 y_train = torch.from_numpy(y_train).type(torch.Tensor)
-y_test = torch.from_numpy(y_test).type(torch.Tensor)
 
-y_train.size(), x_train.size()
+x_test = torch.from_numpy(x_test).type(torch.Tensor)
+y_test = torch.from_numpy(y_test).type(torch.Tensor)
 
 # Build model
 ##################################################
 
-input_dim = 3
+input_dim = 6
 hidden_dim = 32
 num_layers = 2
 output_dim = 1
 num_epochs = 50
-
 
 # Here we define our model as a class
 class LSTM(nn.Module):
@@ -165,11 +140,10 @@ plt.show()
 # make predictions
 y_test_pred = model(x_test)
 
-# invert predictions
-y_train_pred = scaler_all.inverse_transform(y_train_pred.detach().numpy())
-y_train = scaler_all.inverse_transform(y_train.detach().numpy())
-y_test_pred = scaler_all.inverse_transform(y_test_pred.detach().numpy())
-y_test = scaler_all.inverse_transform(y_test.detach().numpy())
+y_train_pred = scaler.fit(y_train).inverse_transform(y_train_pred.detach().numpy())
+y_train = scaler.fit(y_train).inverse_transform(y_train.detach().numpy())
+y_test_pred = scaler.fit(y_test).inverse_transform(y_test_pred.detach().numpy())
+y_test = scaler.fit(y_test).inverse_transform(y_test.detach().numpy())
 
 # calculate root mean squared error
 trainScore = math.sqrt(mean_squared_error(y_train[:, 0], y_train_pred[:, 0]))
