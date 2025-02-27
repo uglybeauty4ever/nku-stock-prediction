@@ -25,6 +25,7 @@ args = parser.parse_args()
 
 time_step = 10  # 根据10天数据预测第11天
 
+df = pd.read_csv("merged_file.csv")
 
 class PositionalEncoding(nn.Module):
     def __init__(self, d_model, max_len=500):
@@ -304,6 +305,9 @@ def eval_plot(encoder, decoder, dataloader):
     plt.savefig("shangzheng-tran-lstmnoavg.png")
     plt.legend()
     plt.show()
+
+def preprocess_data(df):
+    dataset = df[["high", "low", "open", "close", "volume"]]
 
 
 def main():
