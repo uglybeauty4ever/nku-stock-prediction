@@ -28,6 +28,13 @@ time_step = 10  # 根据10天数据预测第11天
 df = pd.read_csv("merged_file.csv")
 
 
+flag = input("是否进行股票市场舆情分析[是]|[否]:")
+if flag == "是":
+    vector_size = 6
+else:
+    vector_size = 5
+
+
 class PositionalEncoding(nn.Module):
     def __init__(self, d_model, max_len=500):
         super(PositionalEncoding, self).__init__()
@@ -52,7 +59,7 @@ class PositionalEncoding(nn.Module):
 
 class TransAm(nn.Module):
     def __init__(
-        self, feature_size=5, num_layers=2, hidden_size=64, dropout=0.1
+        self, feature_size=vector_size, num_layers=2, hidden_size=64, dropout=0.1
     ):  # 修改特征维度为 6
         super(TransAm, self).__init__()
         self.model_type = "Transformer"
@@ -115,8 +122,9 @@ class AttnDecoder(nn.Module):
         self.tanh = nn.Tanh()
         self.attn3 = nn.Linear(in_features=code_hidden_size, out_features=1)
         self.lstm = nn.LSTM(
-            input_size=5, hidden_size=self.hidden_size, num_layers=1
-        )  # 输入特征维度修改为 6
+            input_size=vector_size, hidden_size=self.hidden_size, num_layers=1
+        )
+        # 输入特征维度修改为 6
         self.tilde = nn.Linear(in_features=self.code_hidden_size + 1, out_features=1)
         self.fc1 = nn.Linear(
             in_features=code_hidden_size + hidden_size, out_features=hidden_size
@@ -156,9 +164,12 @@ class StockDataset(Dataset):
         # 读取数据
         data_pd = pd.read_csv(file_path)
 
-        # 只保留需要的列，去掉非数值列如 `date` 和 `code`
-        feature_data = data_pd[["high", "low", "open", "close", "volume"]]
-
+        if vector_size == 5:
+            feature_data = data_pd[["high", "low", "open", "close", "volume"]]
+        else:
+            feature_data = data_pd[
+                ["high", "low", "open", "close", "volume", "avg_sentiment_score"]
+            ]
         self.train_flag = train_flag
         self.data_train_ratio = 0.9
         self.T = T  # 用 T 天的数据来预测
@@ -322,14 +333,14 @@ def eval_plot(encoder, decoder, dataloader, dataset):
     data_x = list(range(len(preds)))
     ax.plot(data_x, preds, label="predict", color="red")
     ax.plot(data_x, labels, label="ground truth", color="blue")
-    ax.set_xlabel('时间步')
-    ax.set_ylabel('开盘价')
-    ax.set_title('Transformer预测开盘价 vs 实际开盘价')
-    plt.ylim(4000,5000)
-    plt.rcParams['font.sans-serif'] = ['SimHei']
-    plt.rcParams['axes.unicode_minus'] = False
+    ax.set_xlabel("时间步")
+    ax.set_ylabel("开盘价")
+    ax.set_title("Transformer预测开盘价 vs 实际开盘价")
+    plt.ylim(4000, 5000)
+    plt.rcParams["font.sans-serif"] = ["SimHei"]
+    plt.rcParams["axes.unicode_minus"] = False
     plt.savefig("shangzheng-tran-lstmnoavg.png")
-    plt.grid(True, linestyle='--', alpha=0.7)
+    plt.grid(True, linestyle="--", alpha=0.7)
     plt.legend()
     plt.show()
 
@@ -347,7 +358,7 @@ def main():
     val_loader = DataLoader(dataset_val, batch_size=32, shuffle=False, drop_last=False)
 
     # 初始化编码器和解码器
-    encoder = TransAm(feature_size=5)  # 设置特征维度为 6
+    encoder = TransAm(feature_size=vector_size)  # 设置特征维度为 6
     decoder = AttnDecoder(code_hidden_size=64, hidden_size=64, time_step=time_step)
 
     encoder_optim = torch.optim.Adam(encoder.parameters(), lr=0.001)
