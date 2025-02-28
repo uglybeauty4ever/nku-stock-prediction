@@ -27,6 +27,7 @@ time_step = 10  # 根据10天数据预测第11天
 
 df = pd.read_csv("merged_file.csv")
 
+
 class PositionalEncoding(nn.Module):
     def __init__(self, d_model, max_len=500):
         super(PositionalEncoding, self).__init__()
@@ -194,7 +195,6 @@ class StockDataset(Dataset):
         return standardized_data * self.std[3] + self.mean[3]
 
 
-
 def l2_loss(pred, label):
     loss = torch.nn.functional.mse_loss(pred, label, size_average=True)
     return loss
@@ -273,7 +273,7 @@ def eval_once(encoder, decoder, dataloader):
     return loss_epoch, accuracy
 
 
-def eval_plot(encoder, decoder, dataloader,dataset):
+def eval_plot(encoder, decoder, dataloader, dataset):
     dataloader.shuffle = False
     preds = []
     labels = []
@@ -306,26 +306,33 @@ def eval_plot(encoder, decoder, dataloader,dataset):
         preds += output.detach().tolist()
         labels += label.detach().tolist()
 
-
     # 裁剪 preds 和 labels 以匹配较短的长度
     min_len = min(len(preds), len(labels))
-    preds = preds[:min_len]
-    labels = labels[:min_len]
+    preds = preds[:40]
+    labels = labels[:40]
 
     # 反标准化
     inverse_preds = [dataset.inverse_normalize(p) for p in preds]
     inverse_labels = [dataset.inverse_normalize(l) for l in labels]
 
-    preds=inverse_preds
-    labels=inverse_labels
+    preds = inverse_preds
+    labels = inverse_labels
 
-    fig, ax = plt.subplots()
+    fig, ax = plt.subplots(figsize=(12, 6))
     data_x = list(range(len(preds)))
     ax.plot(data_x, preds, label="predict", color="red")
     ax.plot(data_x, labels, label="ground truth", color="blue")
+    ax.set_xlabel('时间步')
+    ax.set_ylabel('开盘价')
+    ax.set_title('Transformer预测开盘价 vs 实际开盘价')
+    plt.ylim(4000,5000)
+    plt.rcParams['font.sans-serif'] = ['SimHei']
+    plt.rcParams['axes.unicode_minus'] = False
     plt.savefig("shangzheng-tran-lstmnoavg.png")
+    plt.grid(True, linestyle='--', alpha=0.7)
     plt.legend()
     plt.show()
+
 
 def main():
     # 训练集
@@ -360,7 +367,7 @@ def main():
                     epoch_idx, eval_loss, accuracy
                 )
             )
-            eval_plot(encoder, decoder, val_loader,dataset_val)
+            eval_plot(encoder, decoder, val_loader, dataset_val)
 
 
 if __name__ == "__main__":

@@ -1,221 +1,228 @@
 import torch
 import torch.optim as optim
 import torch.nn as nn
-from torch.autograd import Variable
 import pandas as pd
 import numpy as np
 import time
 import torch.nn.functional as F
 from sklearn.preprocessing import StandardScaler
 import matplotlib.pyplot as plt
-import tqdm
+from tqdm import tqdm
 import warnings
+
 warnings.filterwarnings("ignore", category=UserWarning, module="matplotlib")
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # 超参数设置
 lr = 1e-4
 batch_size = 64
 test_batch_size = 250
-n_epoch = 400  # 训练的epoch次数修改为400
-save_epoch = 100  # 每100个epoch保存一次模型
-log_step = 50
-train_frac = 0.8  # 训练集比例
-test_frac = 0.2  # 测试集比例
+n_epoch = 100
+save_epoch = 100
+train_frac = 0.8
+time_step = 10  # 与Transformer代码一致的时间步长
 
 # 数据文件位置
-data_file = 'merged_file.csv'
+data_file = 'merged_file.csv'  # 修改为您的文件路径
 
 
-# 读取并处理数据
-def load_data(file_path):
-    # 读取CSV文件
-    data = pd.read_csv(file_path)
-
-    # 只选择需要的列
-    data = data[['high', 'low', 'close', 'volume', 'open']]  # 只取需要的列
-
-    # 转换数据类型为 float
-    features = data[['high', 'low', 'close', 'volume', 'open']].values.astype(np.float32)
-    target = data['open'].values.astype(np.float32)  # 使用'open'列作为目标值
-
-    # 创建时间窗口数据（10天为一个时间步长）
-    def create_time_windows(data, window_size=10):
-        X, y = [], []
-        for i in range(len(data) - window_size):
-            X.append(data[i:i + window_size, :-1])  # 提取特征
-            y.append(data[i + window_size, -1])  # 提取目标（下一天的开盘价）
-        return np.array(X), np.array(y)
-
-    # 将数据转换为时间窗口形式
-    X, y = create_time_windows(features)
-
-    # 将数据拆分为训练集和测试集
-    split_idx = int(len(X) * train_frac)
-    X_train, X_test = X[:split_idx], X[split_idx:]
-    y_train, y_test = y[:split_idx], y[split_idx:]
-
-    # 需要调整数据形状，添加一个通道维度
-    X_train = np.expand_dims(X_train, axis=1)  # 添加通道维度 -> [samples, 1, 10, 5]
-    X_test = np.expand_dims(X_test, axis=1)    # 添加通道维度 -> [samples, 1, 10, 5]
-
-    return X_train, y_train, X_test, y_test
-
-# 定义StockDataset类
 class StockDataset(torch.utils.data.Dataset):
-    def __init__(self, features, target):
-        self.features = torch.tensor(features, dtype=torch.float32)
-        self.target = torch.tensor(target, dtype=torch.float32)
+    def __init__(self, file_path, T=time_step, train_flag=True):
+        data_pd = pd.read_csv(file_path)
+        feature_data = data_pd[["high", "low", "open", "close", "volume"]]
 
-    def __getitem__(self, index):
-        return self.features[index], self.target[index]
+        self.train_flag = train_flag
+        self.data_train_ratio = 0.9
+        self.T = T
+
+        # 标准化处理（与Transformer代码完全一致）
+        data_all = np.array(feature_data, dtype=np.float32)
+        self.mean = np.mean(data_all, axis=0)
+        self.std = np.std(data_all, axis=0)
+        data_all = (data_all - self.mean) / self.std
+
+        if train_flag:
+            self.data_len = int(self.data_train_ratio * len(data_all))
+            self.data = data_all[: self.data_len]
+        else:
+            self.data_len = int((1 - self.data_train_ratio) * len(data_all))
+            self.data = data_all[-self.data_len:]
+
+        # 创建时间窗口
+        X, y = [], []
+        for i in range(len(self.data) - self.T):
+            X.append(self.data[i:i + self.T])
+            y.append(self.data[i + self.T, 2])  # 使用open列作为目标
+        self.features = np.array(X)
+        self.targets = np.array(y)
 
     def __len__(self):
-        return len(self.target)
+        return len(self.features)
+
+    def __getitem__(self, index):
+        return self.features[index], self.targets[index]
+
+    def inverse_normalize(self, standardized_data):
+        return standardized_data * self.std[2] + self.mean[2]
 
 
-# 定义CNN模型
 class CNN(nn.Module):
     def __init__(self):
         super(CNN, self).__init__()
-        # 定义卷积层
         self.layer1 = nn.Sequential(
-            nn.Conv2d(1, 8, kernel_size=(3, 2), stride=1, padding=1),
-            nn.ReLU())
+            nn.Conv2d(1, 32, kernel_size=(3, 2), stride=1, padding=1),
+            nn.BatchNorm2d(32),
+            nn.ReLU(),
+            nn.Dropout(p=0.3)
+        )
         self.layer2 = nn.Sequential(
-            nn.Conv2d(8, 16, kernel_size=(3, 2), stride=1, padding=1),
-            nn.ReLU())
+            nn.Conv2d(32, 64, kernel_size=(3, 2), stride=1, padding=1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(),
+            nn.Dropout(p=0.3)
+        )
         self.layer3 = nn.Sequential(
-            nn.Conv2d(16, 32, kernel_size=(3, 2), stride=1, padding=1),
-            nn.ReLU())
+            nn.Conv2d(64, 128, kernel_size=(3, 2), stride=1, padding=1),
+            nn.BatchNorm2d(128),
+            nn.ReLU(),
+            nn.Dropout(p=0.3)
+        )
         self.layer4 = nn.Sequential(
-            nn.Conv2d(32, 16, kernel_size=(3, 1), stride=1, padding=1),
-            nn.ReLU())
-        self.layer5 = nn.Sequential(
-            nn.Conv2d(16, 32, kernel_size=(3, 1), stride=1, padding=1),
-            nn.ReLU())
+            nn.Conv2d(128, 256, kernel_size=(3, 1), stride=1, padding=1),
+            nn.BatchNorm2d(256),
+            nn.ReLU(),
+            nn.Dropout(p=0.3)
+        )
 
         self.flatten = nn.Flatten()
+        self._init_flatten_size()
 
-        # **修改 `in_features`，确保匹配 Flatten 之后的维度**
-        self.fc1 = nn.Linear(3520, 100)
-        self.fc2 = nn.Linear(100, 80)
-        self.fc3 = nn.Linear(80, 1)  # 输出开盘价（回归任务）
+        self.fc1 = nn.Linear(self._to_linear, 512)
+        self.fc2 = nn.Linear(512, 128)
+        self.fc3 = nn.Linear(128, 1)
 
-    def forward(self, x):
+    def _init_flatten_size(self):
+        x = torch.randn(64, 1, 10, 5)
         out = self.layer1(x)
         out = self.layer2(out)
         out = self.layer3(out)
         out = self.layer4(out)
-        out = self.layer5(out)
+        self._to_linear = out.view(out.size(0), -1).shape[1]
+
+    def forward(self, x):
+        x = x.unsqueeze(1)  # 添加通道维度 [batch, 1, time_step, features]
+        out = self.layer1(x)
+        out = self.layer2(out)
+        out = self.layer3(out)
+        out = self.layer4(out)
         out = self.flatten(out)
         out = F.relu(self.fc1(out))
         out = F.relu(self.fc2(out))
-        out = self.fc3(out)  # 输出一个值：开盘价
-        return out
+        return self.fc3(out)
 
 
-# 定义训练和测试的过程
-def train(model, train_loader, optimizer, criterion):
-    model.train()
-    running_loss = 0.0
-    for i, (inputs, labels) in enumerate(train_loader):
-        inputs, labels = inputs.to(device), labels.to(device)
-
-        optimizer.zero_grad()
-        outputs = model(inputs)
-        loss = criterion(outputs.squeeze(), labels)  # 回归任务，输出一个标量
-        loss.backward()
-        optimizer.step()
-
-        running_loss += loss.item()
-
-    return running_loss / len(train_loader)
+def l2_loss(pred, label):
+    return F.mse_loss(pred.squeeze(), label, reduction="mean")
 
 
-def test(model, test_loader, criterion):
+def test(model, test_loader, dataset):
     model.eval()
     total_loss = 0.0
-    with torch.no_grad():
-        for inputs, labels in test_loader:
-            inputs, labels = inputs.to(device), labels.to(device)
-
-            outputs = model(inputs)
-            loss = criterion(outputs.squeeze(), labels)
-
-            total_loss += loss.item()
-
-    return total_loss / len(test_loader)
-
-
-# 评估并生成预测图像
-def eval_plot(model, test_loader):
-    model.eval()
     preds = []
     labels = []
-    loader = tqdm.tqdm(test_loader)
-
     with torch.no_grad():
-        for idx, (data, label) in enumerate(loader):
-            data = data.to(device)
-            output = model(data).squeeze(1)
+        for inputs, label in test_loader:
+            inputs = inputs.to(device)
+            outputs = model(inputs).squeeze()
 
-            preds += output.cpu().numpy().tolist()
+            # 限制长度为40，确保与Transformer一致
+            outputs = outputs[:40]
+            label = label[:40]
+
+            loss = l2_loss(outputs, label.to(device))
+            total_loss += loss.item()
+
+            preds += outputs.cpu().numpy().tolist()
             labels += label.cpu().numpy().tolist()
 
-    # 不进行标准化反操作
-    preds = np.array(preds)
-    labels = np.array(labels)
+    # 计算准确率（与Transformer代码一致）
+    accuracy = 0
+    if len(preds) > 1 and len(labels) > 1:
+        preds_t = torch.Tensor(preds)
+        labels_t = torch.Tensor(labels)
+        pred_ = preds_t[1:] > preds_t[:-1]
+        label_ = labels_t[1:] > labels_t[:-1]
+        accuracy = (label_ == pred_).sum().item() / len(pred_)
 
-    # 绘图
-    plt.rcParams['font.sans-serif'] = ['SimHei']  # 用来正常显示中文标签
-    plt.rcParams['axes.unicode_minus'] = False  # 用来正常显示负号
+    # 反标准化
+    inverse_preds = [dataset.inverse_normalize(p) for p in preds]
+    inverse_labels = [dataset.inverse_normalize(l) for l in labels]
 
+    return total_loss / len(test_loader), accuracy, inverse_preds, inverse_labels
+
+
+def eval_plot(preds, labels):
+    plt.rcParams['font.sans-serif'] = ['SimHei']
+    plt.rcParams['axes.unicode_minus'] = False
     fig, ax = plt.subplots(figsize=(12, 6))
-    data_x = list(range(len(preds)))
+
+    # 限制X轴为前40个时间步
+    data_x = list(range(min(len(preds), 40)))
+    preds = preds[:40]
+    labels = labels[:40]
+
     ax.plot(data_x, preds, label='预测值', color='red')
     ax.plot(data_x, labels, label='实际值', color='blue')
-
     ax.set_xlabel('时间步')
     ax.set_ylabel('开盘价')
-    ax.set_title('预测开盘价 vs 实际开盘价')
-
+    ax.set_title('CNN预测开盘价 vs 实际开盘价')
+    plt.ylim(4000,5000)
     plt.legend()
     plt.grid(True, linestyle='--', alpha=0.7)
-    plt.savefig('cnn预测图.png')
+    plt.savefig('cnn_prediction.png')
     plt.show()
 
 
 if __name__ == '__main__':
-    # 加载数据
-    X_train, y_train, X_test, y_test = load_data(data_file)
+    # 初始化数据集
+    train_dataset = StockDataset(data_file, train_flag=True)
+    test_dataset = StockDataset(data_file, train_flag=False)
 
-    # 将数据转换为PyTorch Dataset和DataLoader
-    train_dataset = StockDataset(X_train, y_train)
-    test_dataset = StockDataset(X_test, y_test)
     train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=test_batch_size, shuffle=False)
 
-    # 初始化CNN模型
     model = CNN().to(device)
-    print(model)
-
-    # 定义优化器和损失函数
     optimizer = optim.Adam(model.parameters(), lr=lr)
-    criterion = nn.MSELoss().to(device)
+    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=30, gamma=0.1)
+    criterion = nn.MSELoss()
 
-    # 训练模型
     for epoch in range(n_epoch):
-        train_loss = train(model, train_loader, optimizer, criterion)
-        test_loss = test(model, test_loader, criterion)
+        # 训练阶段
+        model.train()
+        train_loss = 0.0
+        for inputs, labels in tqdm(train_loader):
+            inputs, labels = inputs.to(device), labels.to(device)
+            optimizer.zero_grad()
+            outputs = model(inputs).squeeze()
+            loss = criterion(outputs, labels)
+            loss.backward()
+            optimizer.step()
+            train_loss += loss.item()
+        train_loss /= len(train_loader)
 
-        print(f"Epoch {epoch + 1}/{n_epoch}, Train Loss: {train_loss:.4f}, Test Loss: {test_loss:.4f}")
+        # 测试阶段
+        test_loss, accuracy, preds, labels = test(model, test_loader, test_dataset)
+        scheduler.step()
 
-        # 保存模型
-        if (epoch + 1) % save_epoch == 0:
-            torch.save(model.state_dict(), f"model_epoch_{epoch + 1}.pth")
+        print(f"Epoch {epoch + 1}/{n_epoch} | "
+              f"Train Loss: {train_loss:.4f} | "
+              f"Test Loss: {test_loss:.4f} | "
+              f"Accuracy: {accuracy:.2%}")
+
+        # 绘制预测图
+        if (epoch + 1) % 100 == 0 or epoch == 0:
+            eval_plot(preds, labels)
 
     print('Training complete.')
-
-    # 绘制预测图像
-    eval_plot(model, test_loader)
+    torch.save(model.state_dict(), "final_cnn_model.pth")
