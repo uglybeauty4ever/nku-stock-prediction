@@ -13,16 +13,6 @@ import torch.nn.functional as F
 torch.random.manual_seed(0)
 np.random.seed(0)
 
-# 支持用户在命令行输入自定义文件路径
-parser = argparse.ArgumentParser("Transformer-LSTM")
-parser.add_argument(
-    "-data_path",
-    type=str,
-    default="merged_file.csv",
-    help="dataset path",
-)
-args = parser.parse_args()
-
 time_step = 10  # 根据10天数据预测第11天
 
 df = pd.read_csv("merged_file.csv")
@@ -160,40 +150,40 @@ class AttnDecoder(nn.Module):
 
 
 class StockDataset(Dataset):
-    def __init__(self, file_path, T=time_step, train_flag=True):
+    def __init__(self, file_path, train_ratio, time_step, train_flag):
         # 读取数据
-        data_pd = pd.read_csv(file_path)
-
+        df = pd.read_csv(file_path)
+        # 确定特征数据
         if vector_size == 5:
-            feature_data = data_pd[["high", "low", "open", "close", "volume"]]
+            data = df[["high", "low", "open", "close", "volume"]]
         else:
-            feature_data = data_pd[
-                ["high", "low", "open", "close", "volume", "avg_sentiment_score"]
-            ]
-        self.train_flag = train_flag
-        self.data_train_ratio = 0.9
-        self.T = T  # 用 T 天的数据来预测
-
-        # 将特征数据进行归一化
-        data_all = np.array(feature_data, dtype=np.float32)
-        self.mean = np.mean(data_all, axis=0)
-        self.std = np.std(data_all, axis=0)
-        data_all = (data_all - np.mean(data_all, axis=0)) / np.std(data_all, axis=0)
-        # 划分训练集和验证集
+            data = df[["high", "low", "open", "close", "volume", "avg_sentiment_score"]]
+        # 转原始数据为numpy数组
+        data = np.array(data, dtype=np.float32)
+        # 获取特征数据平均值
+        self.mean = np.mean(data, axis=0)
+        # 获取特征数据方差
+        self.std = np.std(data, axis=0)
+        # 获取标准化后的数据
+        self.data = (data - self.mean) / self.std
+        # 划分训练集与验证集
+        train_size = int(len(self.data) * train_ratio)
         if train_flag:
-            self.data_len = int(self.data_train_ratio * len(data_all))
-            self.data = data_all[: self.data_len]
+            self.data = self.data[:train_size]
         else:
-            self.data_len = int((1 - self.data_train_ratio) * len(data_all))
-            self.data = data_all[-self.data_len :]
+            self.data = self.data[train_size:]
+        # 确定数据的时间序列长度
+        self.time_step = time_step
 
     def __len__(self):
-        return self.data_len - self.T
+        # 返回数据长度
+        return int(len(self.data)) - self.time_step
 
-    def __getitem__(self, idx):
-        input_sequence = self.data[idx : idx + self.T]
-        target_value = self.data[idx + self.T, 3]  # 使用'close'列作为标签
-        return input_sequence, target_value
+    def __getitem__(self, index):
+        # 按照时间序列长度划分数据
+        data = self.data[index : index + self.time_step]
+        label = self.data[index + self.time_step, 3]
+        return data, label
 
     def inverse_normalize(self, standardized_data):
         """
@@ -347,9 +337,13 @@ def eval_plot(encoder, decoder, dataloader, dataset):
 
 def main():
     # 训练集
-    dataset_train = StockDataset(file_path=args.data_path)
+    dataset_train = StockDataset(
+        file_path="merged_file.csv", train_ratio=0.9, time_step=10, train_flag=True
+    )
     # 验证集
-    dataset_val = StockDataset(file_path=args.data_path, train_flag=False)
+    dataset_val = StockDataset(
+        file_path="merged_file.csv", train_ratio=0.9, time_step=10, train_flag=False
+    )
 
     # 将 drop_last=True 仅用于训练集，确保验证集的批次不会丢失数据
     train_loader = DataLoader(
