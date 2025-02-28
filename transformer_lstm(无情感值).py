@@ -182,14 +182,17 @@ class StockDataset(Dataset):
         input_sequence = self.data[idx : idx + self.T]
         target_value = self.data[idx + self.T, 3]  # 使用'close'列作为标签
         return input_sequence, target_value
-    
+
     def inverse_normalize(self, standardized_data):
         """
-        反标准化方法，将标准化后的数据还原为原始数据
+        反标准化方法，支持处理嵌套列表
         :param standardized_data: 标准化后的数据
         :return: 原始数据
         """
+        if isinstance(standardized_data, list):
+            return [self.inverse_normalize(x) for x in standardized_data]
         return standardized_data * self.std[3] + self.mean[3]
+
 
 
 def l2_loss(pred, label):
@@ -270,7 +273,7 @@ def eval_once(encoder, decoder, dataloader):
     return loss_epoch, accuracy
 
 
-def eval_plot(encoder, decoder, dataloader):
+def eval_plot(encoder, decoder, dataloader,dataset):
     dataloader.shuffle = False
     preds = []
     labels = []
@@ -303,10 +306,18 @@ def eval_plot(encoder, decoder, dataloader):
         preds += output.detach().tolist()
         labels += label.detach().tolist()
 
+
     # 裁剪 preds 和 labels 以匹配较短的长度
     min_len = min(len(preds), len(labels))
     preds = preds[:min_len]
     labels = labels[:min_len]
+
+    # 反标准化
+    inverse_preds = [dataset.inverse_normalize(p) for p in preds]
+    inverse_labels = [dataset.inverse_normalize(l) for l in labels]
+
+    preds=inverse_preds
+    labels=inverse_labels
 
     fig, ax = plt.subplots()
     data_x = list(range(len(preds)))
@@ -349,7 +360,7 @@ def main():
                     epoch_idx, eval_loss, accuracy
                 )
             )
-            eval_plot(encoder, decoder, val_loader)
+            eval_plot(encoder, decoder, val_loader,dataset_val)
 
 
 if __name__ == "__main__":
