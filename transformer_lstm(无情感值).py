@@ -164,6 +164,8 @@ class StockDataset(Dataset):
 
         # 将特征数据进行归一化
         data_all = np.array(feature_data, dtype=np.float32)
+        self.mean = np.mean(data_all, axis=0)
+        self.std = np.std(data_all, axis=0)
         data_all = (data_all - np.mean(data_all, axis=0)) / np.std(data_all, axis=0)
         # 划分训练集和验证集
         if train_flag:
@@ -178,8 +180,16 @@ class StockDataset(Dataset):
 
     def __getitem__(self, idx):
         input_sequence = self.data[idx : idx + self.T]
-        target_value = self.data[idx + self.T, 4]  # 使用'close'列作为标签
+        target_value = self.data[idx + self.T, 3]  # 使用'close'列作为标签
         return input_sequence, target_value
+    
+    def inverse_normalize(self, standardized_data):
+        """
+        反标准化方法，将标准化后的数据还原为原始数据
+        :param standardized_data: 标准化后的数据
+        :return: 原始数据
+        """
+        return standardized_data * self.std[3] + self.mean[3]
 
 
 def l2_loss(pred, label):
@@ -306,10 +316,6 @@ def eval_plot(encoder, decoder, dataloader):
     plt.legend()
     plt.show()
 
-def preprocess_data(df):
-    dataset = df[["high", "low", "open", "close", "volume"]]
-
-
 def main():
     # 训练集
     dataset_train = StockDataset(file_path=args.data_path)
@@ -329,14 +335,14 @@ def main():
     encoder_optim = torch.optim.Adam(encoder.parameters(), lr=0.001)
     decoder_optim = torch.optim.Adam(decoder.parameters(), lr=0.001)
 
-    total_epoch = 400
+    total_epoch = 10
     for epoch_idx in range(total_epoch):
         train_loss = train_once(
             encoder, decoder, train_loader, encoder_optim, decoder_optim
         )
         print("stage: train, epoch:{:5d}, loss:{}".format(epoch_idx, train_loss))
 
-        if epoch_idx % 399 == 0:
+        if epoch_idx % 9 == 0:
             eval_loss, accuracy = eval_once(encoder, decoder, val_loader)
             print(
                 "####stage: test, epoch:{:5d}, loss:{}, accuracy:{}".format(

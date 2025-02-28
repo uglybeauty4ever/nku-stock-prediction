@@ -118,15 +118,13 @@ class StockDataset(Dataset):
     def __init__(self, file_path, T=time_step, train_flag=True):
         # 读取数据
         df = pd.read_csv(file_path)
-
-        # 只保留需要的列，去掉非数值列如 `date` 和 `code`
-        feature_data = df[['avg_sentiment_score', 'high', 'low', 'open', 'close', 'volume']]
-
         self.train_flag = train_flag
         self.data_train_ratio = 0.9
         self.T = T  # 用 T 天的数据来预测
 
-        # 将特征数据进行归一化
+
+        # 只保留需要的列，去掉非数值列如 `date` 和 `code`
+        feature_data = df[['avg_sentiment_score', 'high', 'low', 'open', 'close', 'volume']]
         data_all = np.array(feature_data, dtype=np.float32)
         data_all = (data_all - np.mean(data_all, axis=0)) / np.std(data_all, axis=0)
         # 划分训练集和验证集

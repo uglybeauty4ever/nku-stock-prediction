@@ -11,8 +11,6 @@ def clean_and_segment(text, stopwords):
     seg_list = jieba.lcut(text)
     return [word for word in seg_list if word not in stopwords]
 
-
-# 加载停用词、否定词、程度副词文件
 # 加载停用词、否定词、程度副词文件
 def load_resources(stopwords_file, negation_file, degree_file):
     stopwords = set()
@@ -128,7 +126,7 @@ def merge_with_market_data(sentiment_file, market_file):
 
     # 基于date列进行合并
     merged_df = pd.merge(sentiment_df, market_df, on='date')
-    merged_df.to_csv('D://project//stock-forecasting//new-version//merged_file.csv', index=False)
+    merged_df.to_csv('merged_file.csv', index=False)
 
     # 输出合并结果
     print("Merged data saved to 'merged_file.csv'.")
