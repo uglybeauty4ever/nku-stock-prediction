@@ -335,14 +335,12 @@ def main():
     # 训练阶段
     print("-------------------------STAGE: TRAIN -------------------------")
     for idx in range(epoch):
-        train_loss = train_once(
-            encoder, decoder, train_loader, encoder_optim, decoder_optim
-        )
-        print("epoch:{:5d}, loss:{}".format(idx + 1, train_loss))
+        loss = train_once(encoder, decoder, train_loader, encoder_optim, decoder_optim)
+        print("epoch:{:5d}, loss:{}".format(idx + 1, loss))
     # 验证阶段
-    eval_loss, accuracy, preds, labels = eval_once(encoder, decoder, val_loader)
     print("-------------------------STAGE: VALIDATION -------------------------")
-    print("epoch:{:5d}, loss:{}, accuracy:{}".format(idx, eval_loss, accuracy))
+    loss, accuracy, preds, labels = eval_once(encoder, decoder, val_loader)
+    print("loss:{}, accuracy:{}".format(loss, accuracy))
     # 绘图
     data_plot(preds, labels, val_data)
 

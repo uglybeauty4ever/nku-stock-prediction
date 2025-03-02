@@ -136,9 +136,9 @@ def test(model, test_loader, dataset):
             inputs = inputs.to(device)
             outputs = model(inputs).squeeze()
 
-            # 限制长度为40，确保与Transformer一致
-            outputs = outputs[:40]
-            label = label[:40]
+            # 限制长度为45，确保与Transformer一致
+            outputs = outputs[:46]
+            label = label[:46]
 
             loss = l2_loss(outputs, label.to(device))
             total_loss += loss.item()
@@ -168,16 +168,15 @@ def eval_plot(preds, labels):
     fig, ax = plt.subplots(figsize=(12, 6))
 
     # 限制X轴为前40个时间步
-    data_x = list(range(min(len(preds), 40)))
-    preds = preds[:40]
-    labels = labels[:40]
+    data_x = list(range(min(len(preds), 46)))
+    preds = preds[:46]
+    labels = labels[:46]
 
     ax.plot(data_x, preds, label='预测值', color='red')
     ax.plot(data_x, labels, label='实际值', color='blue')
     ax.set_xlabel('时间步')
     ax.set_ylabel('开盘价')
     ax.set_title('CNN预测开盘价 vs 实际开盘价')
-    plt.ylim(4000,5000)
     plt.legend()
     plt.grid(True, linestyle='--', alpha=0.7)
     plt.savefig('cnn_prediction.png')
