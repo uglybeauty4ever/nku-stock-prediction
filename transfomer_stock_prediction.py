@@ -13,16 +13,18 @@ import torch.nn.functional as F
 torch.random.manual_seed(0)
 np.random.seed(0)
 
-time_step = 10  # 根据10天数据预测第11天
-
-df = pd.read_csv("merged_file.csv")
-
-
-flag = input("是否进行股票市场舆情分析[是]|[否]:")
+flag = input("是否进行股票市场舆情分析[是]|[否](默认):")
 if flag == "是":
     vector_size = 6
 else:
     vector_size = 5
+
+# 前10天分析第11天
+time_step = 10
+# 按照9：1划分数据集
+train_ratio = 0.9
+# 设置训练轮次
+epoch = 5
 
 
 class PositionalEncoding(nn.Module):
@@ -50,7 +52,7 @@ class PositionalEncoding(nn.Module):
 class TransAm(nn.Module):
     def __init__(
         self, feature_size=vector_size, num_layers=2, hidden_size=64, dropout=0.1
-    ):  # 修改特征维度为 6
+    ):
         super(TransAm, self).__init__()
         self.model_type = "Transformer"
         self.hidden_size = hidden_size
@@ -59,7 +61,7 @@ class TransAm(nn.Module):
         # 将 feature_size 传递给 PositionalEncoding，以便匹配新的输入维度
         self.pos_encoder = PositionalEncoding(d_model=feature_size)
         self.encoder_layer = nn.TransformerEncoderLayer(
-            d_model=feature_size, nhead=1, dropout=dropout, batch_first=True
+            d_model=feature_size, nhead=feature_size, dropout=dropout, batch_first=True
         )
         self.transformer_encoder = nn.TransformerEncoder(
             self.encoder_layer, num_layers=num_layers
@@ -150,7 +152,7 @@ class AttnDecoder(nn.Module):
 
 
 class StockDataset(Dataset):
-    def __init__(self, file_path, train_ratio, time_step, train_flag):
+    def __init__(self, file_path, train_flag):
         # 读取数据
         df = pd.read_csv(file_path)
         # 确定特征数据
@@ -186,47 +188,10 @@ class StockDataset(Dataset):
         return data, label
 
     def inverse_normalize(self, standardized_data):
-        """
-        反标准化方法，支持处理嵌套列表
-        :param standardized_data: 标准化后的数据
-        :return: 原始数据
-        """
+        # 对每个数据进行反标准化
         if isinstance(standardized_data, list):
             return [self.inverse_normalize(x) for x in standardized_data]
         return standardized_data * self.std[3] + self.mean[3]
-
-
-def l2_loss(pred, label):
-    loss = torch.nn.functional.mse_loss(pred, label, size_average=True)
-    return loss
-
-
-def train_once(encoder, decoder, dataloader, encoder_optim, decoder_optim):
-    encoder.train()
-    decoder.train()
-    loader = tqdm.tqdm(dataloader)
-    loss_epoch = 0
-    for idx, (data, label) in enumerate(loader):
-        data_x = data.transpose(0, 1).float()  # (time_step, batch_size, num_features)
-        label = label.float()
-
-        # 打印数据形状进行调试
-        print("data_x shape:", data_x.shape)
-        print("label shape:", label.shape)
-
-        code_hidden = encoder(data_x)
-        code_hidden = code_hidden.transpose(0, 1)
-        output = decoder(code_hidden, data.float())
-
-        encoder_optim.zero_grad()
-        decoder_optim.zero_grad()
-        loss = l2_loss(output.squeeze(1), label)
-        loss.backward()
-        encoder_optim.step()
-        decoder_optim.step()
-        loss_epoch += loss.detach().item()
-    loss_epoch /= len(loader)
-    return loss_epoch
 
 
 def l2_loss(pred, label):
@@ -235,144 +200,151 @@ def l2_loss(pred, label):
     return loss
 
 
-def eval_once(encoder, decoder, dataloader):
+def train_once(encoder, decoder, train_loader, encoder_optim, decoder_optim):
+    # 设置为训练模式
+    encoder.train()
+    decoder.train()
+    # 设置进度条
+    loader = tqdm.tqdm(train_loader)
+    # 初始化平均损失值
+    loss_epoch = 0
+    for idx, (data, label) in enumerate(loader):
+        # 转换数据类型
+        data = data.float()
+        label = label.float()
+        # 交换原始数据0，1维向量
+        transposed_data = data.transpose(0, 1)
+        # 对数据进行编码
+        encode_data = encoder(transposed_data)
+        # 对数据进行解码
+        decode_data = decoder(encode_data.transpose(0, 1), data)
+        # 获取预测值
+        pred = decode_data.squeeze(1)
+        # 梯度清零
+        encoder_optim.zero_grad()
+        decoder_optim.zero_grad()
+        # 计算损失值
+        loss = l2_loss(pred, label)
+        # 进行反向传播，计算梯度
+        loss.backward()
+        # 更新参数
+        encoder_optim.step()
+        decoder_optim.step()
+        # 累加损失值
+        loss_epoch += loss.detach().item()
+    loss_epoch /= len(loader)
+    return loss_epoch
+
+
+def eval_once(encoder, decoder, val_loader):
+    # 设置为评估模式
     encoder.eval()
     decoder.eval()
-    loader = tqdm.tqdm(dataloader)
+    # 取消数据打乱
+    val_loader.shuffle = False
+    # 设置进度条
+    loader = tqdm.tqdm(val_loader)
+    # 初始化损失值
     loss_epoch = 0
+    # 初始化预测值和原始值
     preds = []
     labels = []
     for idx, (data, label) in enumerate(loader):
-        data_x = data.transpose(0, 1).float()  # (time_step, batch_size, num_features)
+        # 转换数据类型
+        data = data.float()
         label = label.float()
-        data_y = data.float().transpose(0, 1)
-
-        code_hidden = encoder(data_x)
-        output = decoder(code_hidden, data_y).squeeze(1)
-
-        # 确保 output 和 label 的长度一致
+        # 交换原始数据0，1维向量
+        transposed_data = data.transpose(0, 1)
+        # 对数据进行编码
+        encode_data = encoder(transposed_data)
+        # 对数据进行解码
+        decode_data = decoder(encode_data.transpose(0, 1), data)
+        # 获取预测值
+        output = decode_data.squeeze(1)
+        # 确定输出时间步长
         min_len = min(output.size(0), label.size(0))
         output = output[:min_len]
         label = label[:min_len]
-
+        # 计算损失值
         loss = l2_loss(output, label)
         loss_epoch += loss.detach().item()
-
+        # 获取预测数据和原始数据
         preds += output.detach().tolist()
         labels += label.detach().tolist()
-
+    # 计算准确率
     if len(preds) > 1 and len(labels) > 1:
         preds = torch.Tensor(preds)
         labels = torch.Tensor(labels)
+        # 判断增长趋势
         pred_ = preds[1:] > preds[:-1]
         label_ = labels[1:] > labels[:-1]
         accuracy = (label_ == pred_).sum().item() / len(pred_)
     else:
         accuracy = 0
-
     loss_epoch /= len(loader)
-    return loss_epoch, accuracy
+    return loss_epoch, accuracy, preds, labels
 
 
-def eval_plot(encoder, decoder, dataloader, dataset):
-    dataloader.shuffle = False
-    preds = []
-    labels = []
-    encoder.eval()
-    decoder.eval()
-    loader = tqdm.tqdm(dataloader)
-    for idx, (data, label) in enumerate(loader):
-        data_x = data.transpose(0, 1).float()
-        data_y = data.float()
-
-        # 强制调整 data_y 的时间步长度为 time_step
-        if data_y.size(1) > time_step:
-            data_y = data_y[:, :time_step, :]
-        elif data_y.size(1) < time_step:
-            padding = torch.zeros(
-                (data_y.size(0), time_step - data_y.size(1), data_y.size(2))
-            )
-            data_y = torch.cat((data_y, padding), dim=1)
-
-        code_hidden = encoder(data_x)
-
-        # 确保 code_hidden 和 data_y 有一致的 batch size
-        if code_hidden.size(0) != data_y.size(0):
-            if code_hidden.size(0) > data_y.size(0):
-                code_hidden = code_hidden[: data_y.size(0)]
-            else:
-                data_y = data_y[: code_hidden.size(0)]
-
-        output = decoder(code_hidden, data_y)
-        preds += output.detach().tolist()
-        labels += label.detach().tolist()
-
-    # 裁剪 preds 和 labels 以匹配较短的长度
-    min_len = min(len(preds), len(labels))
-    preds = preds[:40]
-    labels = labels[:40]
-
+def data_plot(preds, labels, val_data):
+    # 设置时间步长
+    day = 40
+    # x轴数据
+    days = list(range(day))
+    # y轴数据
+    preds = preds[:day]
+    labels = labels[:day]
     # 反标准化
-    inverse_preds = [dataset.inverse_normalize(p) for p in preds]
-    inverse_labels = [dataset.inverse_normalize(l) for l in labels]
-
-    preds = inverse_preds
-    labels = inverse_labels
-
+    preds = [val_data.inverse_normalize(p) for p in preds]
+    labels = [val_data.inverse_normalize(l) for l in labels]
+    # 设置画布大小
     fig, ax = plt.subplots(figsize=(12, 6))
-    data_x = list(range(len(preds)))
-    ax.plot(data_x, preds, label="predict", color="red")
-    ax.plot(data_x, labels, label="ground truth", color="blue")
+    # 添加x,y内容
+    ax.plot(days, preds, label="预测值", color="red")
+    ax.plot(days, labels, label="实际值", color="blue")
+    # 设置横纵主题
     ax.set_xlabel("时间步")
     ax.set_ylabel("开盘价")
+    # 设置图表主题
     ax.set_title("Transformer预测开盘价 vs 实际开盘价")
+    # 固定y轴范围
     plt.ylim(4000, 5000)
+    # 自定义参数
     plt.rcParams["font.sans-serif"] = ["SimHei"]
     plt.rcParams["axes.unicode_minus"] = False
-    plt.savefig("shangzheng-tran-lstmnoavg.png")
     plt.grid(True, linestyle="--", alpha=0.7)
     plt.legend()
+    # 绘图
     plt.show()
+    # 保存
+    plt.savefig("result.png")
 
 
 def main():
-    # 训练集
-    dataset_train = StockDataset(
-        file_path="merged_file.csv", train_ratio=0.9, time_step=10, train_flag=True
-    )
-    # 验证集
-    dataset_val = StockDataset(
-        file_path="merged_file.csv", train_ratio=0.9, time_step=10, train_flag=False
-    )
-
-    # 将 drop_last=True 仅用于训练集，确保验证集的批次不会丢失数据
-    train_loader = DataLoader(
-        dataset_train, batch_size=32, shuffle=True, drop_last=True
-    )
-    val_loader = DataLoader(dataset_val, batch_size=32, shuffle=False, drop_last=False)
-
+    # 初始化数据集
+    train_data = StockDataset(file_path="merged_file.csv", train_flag=True)
+    val_data = StockDataset(file_path="merged_file.csv", train_flag=False)
+    # 初始化编码层解码层
+    train_loader = DataLoader(train_data, batch_size=32, shuffle=True, drop_last=True)
+    val_loader = DataLoader(val_data, batch_size=32, shuffle=False, drop_last=False)
     # 初始化编码器和解码器
-    encoder = TransAm(feature_size=vector_size)  # 设置特征维度为 6
+    encoder = TransAm(feature_size=vector_size)
     decoder = AttnDecoder(code_hidden_size=64, hidden_size=64, time_step=time_step)
-
+    # 初始化优化器
     encoder_optim = torch.optim.Adam(encoder.parameters(), lr=0.001)
     decoder_optim = torch.optim.Adam(decoder.parameters(), lr=0.001)
-
-    total_epoch = 10
-    for epoch_idx in range(total_epoch):
+    # 训练阶段
+    print("-------------------------STAGE: TRAIN -------------------------")
+    for idx in range(epoch):
         train_loss = train_once(
             encoder, decoder, train_loader, encoder_optim, decoder_optim
         )
-        print("stage: train, epoch:{:5d}, loss:{}".format(epoch_idx, train_loss))
-
-        if epoch_idx % 9 == 0:
-            eval_loss, accuracy = eval_once(encoder, decoder, val_loader)
-            print(
-                "####stage: test, epoch:{:5d}, loss:{}, accuracy:{}".format(
-                    epoch_idx, eval_loss, accuracy
-                )
-            )
-            eval_plot(encoder, decoder, val_loader, dataset_val)
+        print("epoch:{:5d}, loss:{}".format(idx + 1, train_loss))
+    # 验证阶段
+    eval_loss, accuracy, preds, labels = eval_once(encoder, decoder, val_loader)
+    print("-------------------------STAGE: VALIDATION -------------------------")
+    print("epoch:{:5d}, loss:{}, accuracy:{}".format(idx, eval_loss, accuracy))
+    # 绘图
+    data_plot(preds, labels, val_data)
 
 
 if __name__ == "__main__":
